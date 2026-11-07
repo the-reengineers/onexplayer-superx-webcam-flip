@@ -41,6 +41,12 @@ USB webcam) are unaffected and remain visible.
 
 ## Requirements
 
+- Any distro running **PipeWire + WirePlumber** (the default on Fedora,
+  Ubuntu, Debian, Arch, openSUSE) and **systemd**. Verified on Fedora.
+  On distros without PipeWire the flip and on-demand logic still work
+  (direct V4L2 apps are detected too), but the original upside-down
+  camera cannot be hidden from app menus — apps would list both cameras.
+  Without systemd, run `~/.local/bin/webcam-flip` under any supervisor.
 - v4l2loopback module loaded (one-time setup, root):
   ```bash
   echo 'options v4l2loopback devices=1 video_nr=10 card_label="Camera" exclusive_caps=0 max_buffers=4' |
