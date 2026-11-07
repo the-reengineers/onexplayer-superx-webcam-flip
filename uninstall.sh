@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # uninstall.sh — SPDX-License-Identifier: GPL-3.0-only
-# Copyright (C) 2026 onexplayer-webcam-flip contributors
+# Copyright (C) 2026 onexplayer-superx-webcam-flip contributors
 #
 # Removes everything install.sh put in place and restores the original
 # (upside-down) Toshiba camera in app menus. Does not touch the

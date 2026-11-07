@@ -1,5 +1,5 @@
 /* webcam-flip-keeper — SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 onexplayer-webcam-flip contributors
+ * Copyright (C) 2026 onexplayer-superx-webcam-flip contributors
  *
  * Minimal v4l2loopback writer that keeps the device openable while idle.
  * v4l2loopback fails capture VIDIOC_STREAMON with EIO when no writer is

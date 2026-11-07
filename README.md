@@ -1,4 +1,4 @@
-# onexplayer-webcam-flip
+# onexplayer-superx-webcam-flip
 
 The built-in Toshiba webcam on the OneXPlayer Super X is physically mounted
 upside-down. This presents a correctly flipped "Camera" to all apps through a
@@ -63,8 +63,8 @@ USB webcam) are unaffected and remain visible.
 ## Installation
 
 ```bash
-git clone https://github.com/the-reengineers/onexplayer-webcam-flip.git
-cd onexplayer-webcam-flip
+git clone https://github.com/the-reengineers/onexplayer-superx-webcam-flip.git
+cd onexplayer-superx-webcam-flip
 ./install.sh
 ```
 

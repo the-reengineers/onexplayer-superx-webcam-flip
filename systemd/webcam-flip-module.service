@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Copyright (C) 2026 onexplayer-webcam-flip contributors
+# Copyright (C) 2026 onexplayer-superx-webcam-flip contributors
 #
 # Root-level one-shot: load v4l2loopback with the webcam-flip options.
 #

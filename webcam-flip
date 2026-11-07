@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # webcam-flip — SPDX-License-Identifier: GPL-3.0-only
-# Copyright (C) 2026 onexplayer-webcam-flip contributors
+# Copyright (C) 2026 onexplayer-superx-webcam-flip contributors
 #
 # Present the upside-down Toshiba webcam flipped 180° through a
 # v4l2loopback virtual Camera device that all apps see, with the real
