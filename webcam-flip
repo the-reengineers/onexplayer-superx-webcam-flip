@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# webcam-flip — SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 onexplayer-webcam-flip contributors
+#
+# Present the upside-down Toshiba webcam flipped 180° through a
+# v4l2loopback virtual Camera device that all apps see, with the real
+# camera powered only while something is watching.
+#
+# How it works:
+#
+#   keeper  — webcam-flip-keeper, a tiny C writer (source: webcam-flip-keeper.c)
+#             that writes black frames to the loopback while idle. v4l2loopback
+#             refuses VIDIOC_STREAMON on the capture side while no writer is
+#             streaming (EIO), so apps cannot even open the camera unless a
+#             writer is active. The keeper keeps the device permanently ready
+#             without powering the real camera; write() blocks when the buffer
+#             queue is full, so it costs ~0 CPU while nobody is reading.
+#
+#   real    — the hflip+vflip ffmpeg reading the Toshiba camera. Started
+#             when a consumer appears, stopped STOP_DELAY seconds after
+#             the last consumer goes away (camera light off).
+#
+# Consumer detection uses fuser on the loopback node, not pw-link:
+#   - PipeWire clients (portal apps, browsers): the pipewire daemon holds
+#     the device open while a client streams, and closes it when done.
+#   - Direct V4L2 apps hold the device open themselves.
+#   - When idle, only our own writer has it open.
+# pw-link / pw-dump node state cannot see direct V4L2 consumers (they
+# bypass PipeWire entirely), which is why the earlier pw-link polling
+# attempt failed.
+#
+# All tunables can be overridden in ~/.config/webcam-flip.conf (see
+# webcam-flip.conf in the repo for the annotated template).
+#
+# To turn off the camera entirely:  systemctl --user stop webcam-flip
+set -euo pipefail
+
+# --- defaults (overridable via ~/.config/webcam-flip.conf) ---
+SOURCE=""               # source camera; empty = auto-detect (first Toshiba
+                        # camera supporting WIDTHxHEIGHT)
+LOOPBACK="/dev/video10"
+WIDTH=1280
+HEIGHT=720
+PIXFMT="YUYV"
+KEEPER="$HOME/.local/bin/webcam-flip-keeper"
+KEEPER_FPS=10           # black-frame rate while idle (keeps device ready)
+POLL_INTERVAL=0.5       # seconds between consumer checks
+STOP_DELAY=2            # seconds with no consumers before camera writer stops
+CAMERA_OPEN_RETRIES=8   # uvcvideo needs a settle time after close (EBUSY)
+CAMERA_OPEN_WAIT=2      # seconds to wait for each ffmpeg start attempt
+REAL_RETRY_COOLDOWN=10  # seconds to back off after the camera fails to open
+
+CONF="$HOME/.config/webcam-flip.conf"
+[ -f "$CONF" ] && . "$CONF"
+
+WRITER_PID=""
+WRITER_KIND=""   # "keeper" | "real" | "" (none)
+
+find_source() {
+    local dev
+    for dev in /dev/video*; do
+        [ "$dev" = "$LOOPBACK" ] && continue
+        if v4l2-ctl -d "$dev" --info 2>/dev/null | grep -q "TOSHIBA" && \
+           v4l2-ctl -d "$dev" --list-formats-ext 2>/dev/null | grep -q "${WIDTH}x${HEIGHT}"; then
+            echo "$dev"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -z "$SOURCE" ]; then
+    SOURCE=$(find_source)
+fi
+if [ -z "$SOURCE" ]; then
+    echo "Error: Toshiba webcam not found" >&2
+    exit 1
+fi
+
+echo "Source: $SOURCE → Loopback: $LOOPBACK" >&2
+
+# Belt-and-braces: pre-set the loopback format for the window before
+# the keeper starts. NOTE this alone is NOT enough for WirePlumber —
+# it caches the uninitialised 2×1 format unless a writer is actively
+# streaming when it probes (see the keeper-first ordering below).
+v4l2-ctl -d "$LOOPBACK" --set-fmt-video=width=$WIDTH,height=$HEIGHT,pixelformat=$PIXFMT
+
+has_consumers() {
+    local pid
+    for pid in $(fuser "$LOOPBACK" 2>/dev/null || true); do
+        if [ "$pid" != "$WRITER_PID" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+start_keeper() {
+    echo "[$(date +%T)] Starting keeper (idle black frames, camera off)" >&2
+    if [ -x "$KEEPER" ]; then
+        # webcam-flip-keeper writes black YUYV frames; its write() blocks
+        # while the queue is full, so idle CPU is ~0.
+        "$KEEPER" "$LOOPBACK" "$WIDTH" "$HEIGHT" "$KEEPER_FPS" &
+    else
+        echo "[$(date +%T)] Warning: $KEEPER missing — using ffmpeg fallback" >&2
+        ffmpeg -nostdin -loglevel error -re \
+            -f lavfi -i color=c=black:s=${WIDTH}x${HEIGHT}:r=$KEEPER_FPS \
+            -pix_fmt yuyv422 -f v4l2 "$LOOPBACK" &
+    fi
+    WRITER_PID=$!
+    WRITER_KIND="keeper"
+}
+
+start_real() {
+    local i pid
+    echo "[$(date +%T)] Consumer detected — starting camera ($SOURCE, hflip+vflip)" >&2
+    for i in $(seq 1 "$CAMERA_OPEN_RETRIES"); do
+        ffmpeg -nostdin -loglevel error \
+            -f v4l2 -video_size ${WIDTH}x${HEIGHT} -i "$SOURCE" \
+            -vf "hflip,vflip,format=yuyv422" \
+            -f v4l2 -pix_fmt yuyv422 "$LOOPBACK" &
+        pid=$!
+        sleep "$CAMERA_OPEN_WAIT"
+        if kill -0 "$pid" 2>/dev/null; then
+            WRITER_PID=$pid
+            WRITER_KIND="real"
+            echo "[$(date +%T)] Camera streaming (attempt $i)" >&2
+            return 0
+        fi
+        wait "$pid" 2>/dev/null || true
+        echo "[$(date +%T)] Camera not ready yet (attempt $i/$CAMERA_OPEN_RETRIES)..." >&2
+    done
+    echo "[$(date +%T)] Error: could not open $SOURCE after $CAMERA_OPEN_RETRIES attempts" >&2
+    return 1
+}
+
+stop_writer() {
+    if [ -z "$WRITER_PID" ]; then
+        return 0
+    fi
+    kill "$WRITER_PID" 2>/dev/null || true
+    wait "$WRITER_PID" 2>/dev/null || true
+    WRITER_PID=""
+    WRITER_KIND=""
+}
+
+cleanup() {
+    echo "[$(date +%T)] Shutting down" >&2
+    stop_writer
+    exit 0
+}
+trap cleanup SIGINT SIGTERM
+
+# WirePlumber must probe the loopback while a writer is actively
+# streaming, otherwise it caches the uninitialised 2×1 format and apps
+# negotiate garbage (Snapshot: "Could not play camera stream"). The
+# keeper provides that writer, so it must start BEFORE the restart.
+start_keeper
+
+echo "[$(date +%T)] Restarting WirePlumber to re-probe with correct format..." >&2
+systemctl --user restart wireplumber 2>/dev/null || true
+sleep 3
+
+echo "[$(date +%T)] Monitoring $LOOPBACK for consumers" >&2
+
+idle_since=0
+real_retry_at=0
+while :; do
+    sleep "$POLL_INTERVAL"
+
+    # Reap a dead writer (e.g. camera error) so it can be restarted
+    if [ -n "$WRITER_PID" ] && ! kill -0 "$WRITER_PID" 2>/dev/null; then
+        wait "$WRITER_PID" 2>/dev/null || true
+        WRITER_PID=""
+        WRITER_KIND=""
+    fi
+
+    now=$(date +%s)
+
+    if has_consumers; then
+        idle_since=0
+        if [ "$WRITER_KIND" != "real" ] && [ "$now" -ge "$real_retry_at" ]; then
+            stop_writer
+            if ! start_real; then
+                start_keeper
+                real_retry_at=$((now + REAL_RETRY_COOLDOWN))
+            fi
+        fi
+    elif [ "$WRITER_KIND" = "real" ]; then
+        if [ "$idle_since" -eq 0 ]; then
+            idle_since=$now
+        elif [ $((now - idle_since)) -ge "$STOP_DELAY" ]; then
+            echo "[$(date +%T)] No consumers — stopping camera (light off)" >&2
+            stop_writer
+            start_keeper
+            idle_since=0
+        fi
+    else
+        idle_since=0
+        # Make sure a keeper is always running
+        if [ -z "$WRITER_KIND" ]; then
+            start_keeper
+        fi
+    fi
+done

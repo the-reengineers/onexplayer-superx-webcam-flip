@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 onexplayer-webcam-flip contributors
+[Unit]
+Description=Flip webcam 180° (ffmpeg hflip+vflip → v4l2loopback)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/alex/.local/bin/webcam-flip
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
