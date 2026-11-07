@@ -10,6 +10,10 @@ set -euo pipefail
 BIN_DIR="$HOME/.local/bin"
 CONF_DIR="$HOME/.config"
 
+sudo systemctl disable --now webcam-flip-module.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/webcam-flip-module.service
+sudo systemctl daemon-reload
+
 systemctl --user disable --now webcam-flip.service 2>/dev/null || true
 
 rm -f "$BIN_DIR/webcam-flip" \

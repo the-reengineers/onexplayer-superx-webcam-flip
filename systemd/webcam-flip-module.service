@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 onexplayer-webcam-flip contributors
+#
+# Root-level one-shot: load v4l2loopback with the webcam-flip options.
+#
+# Why a dedicated unit instead of /etc/modules-load.d: the Fedora
+# v4l2loopback package ships /usr/lib/modprobe.d/98-v4l2loopback.conf
+# ("OBS Virtual Camera", exclusive_caps=1, no video_nr), and a plain
+# `modprobe v4l2loopback` has been observed to merge ONLY those
+# options — creating zero usable devices. Options passed on the
+# modprobe command line always win, so they are passed explicitly
+# here. If the module is already loaded but /dev/video10 is missing
+# (e.g. loaded by something else without options), it is reloaded.
+#
+# The device parameters here must match LOOPBACK/WIDTH/HEIGHT in
+# webcam-flip.conf (defaults: video10, 1280x720, YUYV).
+
+[Unit]
+Description=Load v4l2loopback for webcam-flip (/dev/video10)
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'if [ ! -e /dev/video10 ]; then rmmod v4l2loopback 2>/dev/null; modprobe v4l2loopback devices=1 video_nr=10 card_label=Camera exclusive_caps=0 max_buffers=4; fi'
+
+[Install]
+WantedBy=multi-user.target

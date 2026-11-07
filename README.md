@@ -47,12 +47,16 @@ USB webcam) are unaffected and remain visible.
   (direct V4L2 apps are detected too), but the original upside-down
   camera cannot be hidden from app menus — apps would list both cameras.
   Without systemd, run `~/.local/bin/webcam-flip` under any supervisor.
-- v4l2loopback module loaded (one-time setup, root):
-  ```bash
-  echo 'options v4l2loopback devices=1 video_nr=10 card_label="Camera" exclusive_caps=0 max_buffers=4' |
-    sudo tee /etc/modprobe.d/v4l2loopback.conf
-  sudo modprobe v4l2loopback   # enroll a MOK key first if Secure Boot rejects it
-  ```
+- v4l2loopback kernel module installed (`kmod-v4l2loopback` or a DKMS
+  build; on Secure Boot enroll a MOK key so the module's signature is
+  accepted). It is loaded at boot by a root-level
+  `webcam-flip-module.service` unit — installed and enabled by
+  `install.sh` (it prompts for sudo). The unit passes the module options
+  on the `modprobe` command line because the Fedora v4l2loopback package
+  ships `/usr/lib/modprobe.d/98-v4l2loopback.conf` ("OBS Virtual Camera",
+  `exclusive_caps=1`, no `video_nr`), and a plain `modprobe v4l2loopback`
+  has been observed to merge only those package options — creating no
+  usable device. Options on the command line always win.
 - User-level tools: `ffmpeg`, `v4l2-ctl` (v4l2-utils), `fuser` (psmisc),
   `gcc`, `systemctl`, `jq`
 
@@ -64,10 +68,11 @@ cd onexplayer-webcam-flip
 ./install.sh
 ```
 
-`install.sh` checks dependencies and hardware, compiles the keeper, installs
-everything under `~/.local` and `~/.config`, enables the user service, and
-verifies the advertised camera format (`YUY2 1280x720`). It never overwrites
-an existing `~/.config/webcam-flip.conf`.
+`install.sh` checks dependencies and hardware, installs the root-level
+module-load unit (sudo prompt), compiles the keeper, installs everything
+under `~/.local` and `~/.config`, enables the user service, and verifies
+the advertised camera format (`YUY2 1280x720`). It never overwrites an
+existing `~/.config/webcam-flip.conf`.
 
 Verify:
 
@@ -85,7 +90,11 @@ the app is actually watching, and the video should be right-side up.
 If you prefer to place files yourself:
 
 ```bash
-# 1. Load the v4l2loopback module (see Requirements)
+# 1. Module-load unit (root, for boot persistence — see Requirements)
+sudo install -Dm644 systemd/webcam-flip-module.service \
+  /etc/systemd/system/webcam-flip-module.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcam-flip-module.service
 
 # 2. Install the scripts
 install -Dm755 webcam-flip ~/.local/bin/webcam-flip
@@ -141,6 +150,14 @@ Other behaviour, as tested:
   v4l2loopback's uninitialised 2×1 format. The script restarts WirePlumber
   *after* starting the keeper for exactly this reason — if it reappears,
   `systemctl --user restart webcam-flip` (which re-does the ordered restart).
+- **Camera not found after reboot / `/dev/video10` missing**: the module
+  wasn't loaded (or was loaded with only the package's OBS options, which
+  create no device). Check `systemctl status webcam-flip-module.service`
+  and `journalctl -u webcam-flip-module -b`. If it's not enabled, re-run
+  `install.sh` (or the manual-install step 1). The module unit is
+  self-healing: `systemctl start webcam-flip-module.service` reloads the
+  module with the right options, and the user service then recovers on
+  its own within a few restarts.
 - **Camera not found after replug / renumbering**: the script re-detects the
   Toshiba by card name on every start; only the loopback node (`/dev/video10`)
   must stay fixed, which the module config pins via `video_nr=10`.
