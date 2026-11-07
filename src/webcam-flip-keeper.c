@@ -52,6 +52,12 @@ int main(int argc, char **argv) {
     unsigned char *buf = calloc(1, size);
     if (!buf) { perror("calloc"); return 1; }
 
+    /* Black in YUYV is Y=0 with neutral chroma (U=V=128); an all-zero
+     * buffer renders green (Cb/Cr are centred at 128, so 0 pushes the
+     * pixel towards green). YUYV layout is [Y0, U, Y1, V, ...]. */
+    for (size_t i = 1; i < size; i += 2)
+        buf[i] = 128;
+
     signal(SIGTERM, on_sig);
     signal(SIGINT, on_sig);
     signal(SIGPIPE, SIG_IGN);
